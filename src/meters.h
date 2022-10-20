@@ -59,6 +59,7 @@ LIST_OF_METER_TYPES
     X(auto,       0,      AutoMeter, AUTO, Auto) \
     X(unknown,    0,      UnknownMeter, UNKNOWN, Unknown) \
     X(apator162,  C1_bit|T1_bit, WaterMeter,       APATOR162,   Apator162)   \
+    X(apator192,  C1_bit|T1_bit, WaterMeter,       APATOR192,   Apator192)   \
     X(bfw240radio,T1_bit, HeatCostAllocationMeter, BFW240RADIO, BFW240Radio)   \
     X(cma12w,     C1_bit|T1_bit, TempHygroMeter,   CMA12W,      CMa12w)      \
     X(compact5,   T1_bit, HeatMeter,        COMPACT5,    Compact5)     \
@@ -79,6 +80,7 @@ LIST_OF_METER_TYPES
     X(hydrus,     T1_bit, WaterMeter,       HYDRUS,      Hydrus)       \
     X(hydrocalm3, T1_bit, HeatMeter,        HYDROCALM3,  HydrocalM3)   \
     X(hydrodigit, T1_bit, WaterMeter,       HYDRODIGIT,  Hydrodigit)   \
+    X(iwmtx3,     T1_bit, WaterMeter,       IWMTX3,      IwmTX3)       \
     X(izar,       T1_bit, WaterMeter,       IZAR,        Izar)         \
     X(izar3,      T1_bit, WaterMeter,       IZAR3,       Izar3)        \
     X(lansensm,   T1_bit, SmokeDetector,    LANSENSM,    LansenSM)     \
