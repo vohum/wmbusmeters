@@ -76,7 +76,7 @@ MeterUnismart::MeterUnismart(MeterInfo &mi) :
              "Timestamp for this total measurement.",
              PrintProperty::JSON);
 
-    addPrint("total", Quantity::Volume,
+    addPrint("gas_total", Quantity::Volume,
              [&](Unit u){ return totalGasConsumption(u); },
              "The total gas consumption recorded by this meter.",
              PrintProperty::FIELD | PrintProperty::JSON);
