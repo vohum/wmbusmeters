@@ -1,16 +1,13 @@
 /*
  Copyright (C) 2020 Fredrik Öhrström (gpl-3.0-or-later)
-
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
  the Free Software Foundation, either version 3 of the License, or
  (at your option) any later version.
-
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
-
  You should have received a copy of the GNU General Public License
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -30,6 +27,8 @@
 #include<sys/stat.h>
 #include<sys/types.h>
 #include<unistd.h>
+#include <iostream>
+#include <fstream>
 
 using namespace std;
 
@@ -117,7 +116,7 @@ struct WMBusRC1180 : public virtual WMBusCommonImplementation
     void deviceSetLinkModes(LinkModeSet lms);
     LinkModeSet supportedLinkModes() {
         return
-            T1_bit;
+            C1_bit | T1_bit;
         // This device can be set to S1,S1-m,S2,T1,T2,R2
         // with a combination of radio_channel+radio_data_rate+mbus_mode+preamble_length.
         // However it is unclear from the documentation if these
@@ -129,13 +128,10 @@ struct WMBusRC1180 : public virtual WMBusCommonImplementation
         // until someone can double check with an s1 meter.
     }
     int numConcurrentLinkModes() { return 1; }
-    bool canSetLinkModes(LinkModeSet lms)
+    bool canSetLinkModes(LinkModeSet desired_modes)
     {
-        if (lms.empty()) return false;
-        if (!supportedLinkModes().supports(lms)) return false;
-        // Ok, the supplied link modes are compatible,
-        // but rc1180 can only listen to one at a time.
-        return 1 == countSetBits(lms.asBits());
+        // C1 and T1 can be listened to at the same time!
+        if (desired_modes.has(LinkMode::C1) && desired_modes.has(LinkMode::T1)) return true;
     }
     void processSerialData();
     void simulate();
@@ -156,7 +152,8 @@ private:
 
     FrameStatus checkRC1180Frame(vector<uchar> &data,
                               size_t *hex_frame_length,
-                              vector<uchar> &payload);
+                              vector<uchar> &payload,
+                              int *rssi_dbm );
 
     string setup_;
 };
@@ -207,7 +204,6 @@ string WMBusRC1180::getDeviceId()
 
     request_.resize(1);
     request_[0] = 0;
-
     verbose("(rc1180) get config to get device id\n");
 
     // Enter config mode.
@@ -240,7 +236,6 @@ string WMBusRC1180::getDeviceId()
     cached_device_id_ = tostrprintf("%08x", device_config_.id);
 
     verbose("(rc1180) got device id %s\n", cached_device_id_.c_str());
-
     // Send config command 'X' to exit config mode.
     request_[0] = 'X';
     ok = serial()->send(request_);
@@ -302,7 +297,7 @@ void WMBusRC1180::processSerialData()
     read_buffer_.insert(read_buffer_.end(), data.begin(), data.end());
 
     size_t frame_length;
-    int payload_len, payload_offset;
+    int payload_len, payload_offset, rssi_dbm;
 
     for (;;)
     {
@@ -330,9 +325,12 @@ void WMBusRC1180::processSerialData()
                 payload.insert(payload.end(), &l, &l+1); // Re-insert the len byte.
                 payload.insert(payload.end(), read_buffer_.begin()+payload_offset, read_buffer_.begin()+payload_offset+payload_len);
             }
+            int rssi = data.back();
+            rssi_dbm = (rssi/2)*-1;
+            verbose("(rc1180) rssi %d (%d dBm)\n", rssi, rssi_dbm);
+            
             read_buffer_.erase(read_buffer_.begin(), read_buffer_.begin()+frame_length);
-            // It should be possible to get the rssi from the dongle.
-            AboutTelegram about("rc1180["+cached_device_id_+"]", 0, FrameType::WMBUS);
+            AboutTelegram about("rc1180["+cached_device_id_+"]", rssi_dbm, FrameType::WMBUS);
             handleTelegram(about, payload);
         }
     }
@@ -389,23 +387,58 @@ AccessCheck detectRC1180(Detected *detected, shared_ptr<SerialCommunicationManag
     }
 
     debug("(rc1180) config: %s\n", co.str().c_str());
+    usleep(1000*200);
 
-    /*
-      Modification of the non-volatile memory should be done using the
-      wmbusmeters-admin program. So this code should not execute here.
+    if (co.mbus_mode != 11)
+    {
+        debug("(rc1180) Set mbus mode to T1+C1\n");
+        // Change the config to T1+C1 MBUS mode.
+        vector<uchar> updateM(1);
+        vector<uchar> mbusMode(3);
+        updateM[0] = 'M';
+        serial->send(updateM);
+        usleep(1000*200);
+        mbusMode[0] = 0x03; // Register 5, rssi_mode
+        mbusMode[1] = 0x0B;    // Set value to 11 T1+C 
+        mbusMode[2] = 0xff; // Stop modifying memory.
+        serial->send(mbusMode);
+    }
+    else 
+    {
+        debug("(rc1180) mbus mode OK\n");
+    }
+    usleep(1000*200);
     if (co.rssi_mode == 0)
     {
+        debug("(rc1180) Set rssi mode\n");
         // Change the config so that the device appends an rssi byte.
-        vector<uchar> updat(4);
-        update[0] = 'M';
-        update[1] = 0x05; // Register 5, rssi_mode
-        update[2] = 1;    // Set value to 1 = enabled.
-        update[3] = 0xff; // Stop modifying memory.
-        serial->send(update);
+        vector<uchar> updateM(1);
+        vector<uchar> updateRssi(3);
+        updateM[0] = 'M';
+        serial->send(updateM);
         usleep(1000*200);
-        // Reboot dongle.
+        updateRssi[0] = 0x05; // Register 5, rssi_mode
+        updateRssi[1] = 1;    // Set value to 1 = enabled.
+        updateRssi[2] = 0xff; // Stop modifying memory.
+        serial->send(updateRssi);
     }
-    */
+    else 
+    {
+        debug("(rc1180) rssi mode OK\n");
+    }
+    usleep(1000*200);
+    //configure LED CONTROL
+    debug("(rc1180) Set led control\n");
+    vector<uchar> updateM(1);
+    vector<uchar> updateLed(3);
+    updateM[0] = 'M';
+    serial->send(updateM);
+    usleep(1000*200);
+    updateLed[0] = 0x3A; // Register 0x3A, LED_CONTROL
+    updateLed[1] = 0x01; // Set value to 0x01 RX / TX indicator
+    updateLed[2] = 0xff; // Stop modifying memory.
+    serial->send(updateLed);
+    usleep(1000*200);
     // Now exit config mode and continue listeing.
     msg[0] = 'X';
     serial->send(msg);
@@ -413,7 +446,11 @@ AccessCheck detectRC1180(Detected *detected, shared_ptr<SerialCommunicationManag
     usleep(1000*200);
 
     serial->close();
-
+    
+    ofstream sn_file("/etc/radio-module");
+    sn_file << co.dongleId().c_str();
+    sn_file.close();
+    
     detected->setAsFound(co.dongleId(), WMBusDeviceType::DEVICE_RC1180, 19200, false,
         detected->specified_device.linkmodes);
 
